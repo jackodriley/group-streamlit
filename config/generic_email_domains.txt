@@ -16,8 +16,12 @@ aol.com
 btinternet.com
 btopenworld.com
 virginmedia.com
+ntlworld.com
+blueyonder.co.uk
 sky.com
 talktalk.net
+talk21.com
+tiscali.co.uk
 gmx.com
 gmx.co.uk
 proton.me
@@ -28,6 +32,9 @@ fastmail.com
 zoho.com
 yandex.com
 yandex.ru
+ymail.com
+rocketmail.com
+duck.com
 qq.com
 163.com
 126.com
@@ -42,3 +49,6 @@ att.net
 cox.net
 shaw.ca
 rogers.com
+live.co.uk
+privaterelay.appleid.com
+observer.co.uk

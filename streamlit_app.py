@@ -134,6 +134,22 @@ def build_segmented_data(df: pd.DataFrame, segment_column: str | None) -> dict[s
     return groups
 
 
+def reorder_segment_names(segment_names: list[str]) -> list[str]:
+    priority = {
+        "subscriber": 0,
+        "subscribers": 0,
+        "registered user": 1,
+        "registered users": 1,
+        "registered": 1,
+        "registration": 1,
+        "all users": 2,
+    }
+    return sorted(
+        segment_names,
+        key=lambda name: (priority.get(str(name).strip().lower(), 3), str(name).strip().lower()),
+    )
+
+
 def derive_user_segments(df: pd.DataFrame) -> pd.DataFrame:
     access_count_column = next(
         (col for col in df.columns if str(col).strip().lower() == "access count"),
@@ -197,6 +213,78 @@ def analyse_segment(df: pd.DataFrame, email_column: str, generic_domains: set[st
         "email_summary": email_summary,
         "corporate_rows": corporate_rows,
     }
+
+
+def filter_result_by_domain(
+    result: dict[str, pd.DataFrame | int],
+    predicate,
+) -> dict[str, pd.DataFrame | int]:
+    corporate_rows = result["corporate_rows"]
+    filtered_rows = corporate_rows[corporate_rows["Email Domain"].map(predicate)].copy()
+
+    domain_summary = (
+        filtered_rows.groupby("Email Domain", dropna=False)
+        .agg(
+            Instances=("Email Address", "size"),
+            Unique_Emails=("Email Address", "nunique"),
+            Sample_Emails=("Email Address", lambda values: ", ".join(sorted(pd.unique(values))[:5])),
+        )
+        .reset_index()
+        .sort_values(["Instances", "Unique_Emails", "Email Domain"], ascending=[False, False, True])
+    )
+
+    email_summary = (
+        filtered_rows.groupby(["Email Address", "Email Domain"], dropna=False)
+        .size()
+        .reset_index(name="Instances")
+        .sort_values(["Instances", "Email Domain", "Email Address"], ascending=[False, True, True])
+    )
+
+    summary = pd.DataFrame(
+        [
+            {
+                "Total rows": int(result["summary"].iloc[0]["Total rows"]),
+                "Valid emails": int(result["summary"].iloc[0]["Valid emails"]),
+                "Corporate email rows": len(filtered_rows),
+                "Unique corporate domains": int(domain_summary["Email Domain"].nunique()),
+                "Unique corporate emails": int(filtered_rows["Email Address"].nunique()),
+            }
+        ]
+    )
+
+    return {
+        "summary": summary,
+        "domain_summary": domain_summary,
+        "email_summary": email_summary,
+        "corporate_rows": filtered_rows,
+    }
+
+
+def build_special_results(results: dict[str, dict[str, pd.DataFrame | int]]) -> dict[str, dict[str, pd.DataFrame | int]]:
+    segment_lookup = {str(name).strip().lower(): name for name in results}
+    special_results = {}
+    special_specs = [
+        ("Education - Subscribers", {"subscriber", "subscribers"}, lambda domain: domain.endswith(".ac.uk")),
+        (
+            "Education - Registered Users",
+            {"registered user", "registered users", "registered", "registration"},
+            lambda domain: domain.endswith(".ac.uk"),
+        ),
+        ("Government - Subscribers", {"subscriber", "subscribers"}, lambda domain: "gov.uk" in domain),
+        (
+            "Government - Registered Users",
+            {"registered user", "registered users", "registered", "registration"},
+            lambda domain: "gov.uk" in domain,
+        ),
+    ]
+
+    for label, segment_aliases, predicate in special_specs:
+        source_name = next((segment_lookup[alias] for alias in segment_aliases if alias in segment_lookup), None)
+        if source_name is None:
+            continue
+        special_results[label] = filter_result_by_domain(results[source_name], predicate)
+
+    return special_results
 
 
 def to_excel_download(results: dict[str, dict[str, pd.DataFrame | int]]) -> bytes:
@@ -328,8 +416,10 @@ def main() -> None:
         segment_name: analyse_segment(segment_df, email_column, generic_domain_set)
         for segment_name, segment_df in segmented_data.items()
     }
+    special_results = build_special_results(results)
+    all_results = {**results, **special_results}
 
-    excel_bytes = to_excel_download(results)
+    excel_bytes = to_excel_download(all_results)
     st.download_button(
         label="Download all results as Excel",
         data=excel_bytes,
@@ -337,11 +427,22 @@ def main() -> None:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
-    segment_names = list(results.keys())
+    base_segment_names = reorder_segment_names(list(results.keys()))
+    special_segment_names = [
+        name
+        for name in [
+            "Education - Subscribers",
+            "Education - Registered Users",
+            "Government - Subscribers",
+            "Government - Registered Users",
+        ]
+        if name in special_results
+    ]
+    segment_names = base_segment_names + special_segment_names
     tabs = st.tabs(segment_names)
     for tab, segment_name in zip(tabs, segment_names):
         with tab:
-            render_segment(segment_name, results[segment_name], top_n)
+            render_segment(segment_name, all_results[segment_name], top_n)
 
 
 if __name__ == "__main__":
